@@ -1,48 +1,44 @@
 const Property = require("../models/Property");
 
-// @desc    Get all properties
-// @route   GET /api/properties
-// @access  Public
+// --- Helper for handling uploaded images
+const formatImages = (files) => {
+  if (!files || files.length === 0) return [];
+  return files.map((file) => `/uploads/${file.filename}`);
+};
+
+// Get all properties
 exports.getProperties = async (req, res) => {
   try {
     const properties = await Property.find().populate({
       path: "postedBy",
       select: "whatsappContact",
     });
-    res.status(200).json({
-      success: true,
-      count: properties.length,
-      data: properties,
-    });
+    res
+      .status(200)
+      .json({ success: true, count: properties.length, data: properties });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
-// @desc    Get single property by ID
-// @route   GET /api/properties/:id
-// @access  Public
+// Get single property by ID
 exports.getPropertyById = async (req, res) => {
   try {
     const property = await Property.findById(req.params.id).populate({
       path: "postedBy",
       select: "whatsappContact",
     });
-    if (!property) {
-      return res.status(404).json({
-        success: false,
-        message: "Property not found",
-      });
-    }
+    if (!property)
+      return res
+        .status(404)
+        .json({ success: false, message: "Property not found" });
     res.status(200).json({ success: true, data: property });
   } catch (err) {
     res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
-// @desc    Create new property
-// @route   POST /api/properties
-// @access  Private (Admin)
+// Create new property
 exports.createProperty = async (req, res) => {
   try {
     const body = req.body || {};
@@ -87,14 +83,8 @@ exports.createProperty = async (req, res) => {
           : undefined,
       },
       postedBy: req.user.id,
+      images: formatImages(req.files),
     };
-
-    // Handle uploaded images
-    if (req.files && req.files.length > 0) {
-      propertyData.images = req.files.map(
-        (file) => `/uploads/${file.filename}`
-      );
-    }
 
     // Validate required fields
     if (
@@ -103,11 +93,9 @@ exports.createProperty = async (req, res) => {
       !propertyData.category ||
       !propertyData.propertyType
     ) {
-      return res.status(400).json({
-        success: false,
-        message:
-          "Missing required fields: title, price, category, propertyType",
-      });
+      return res
+        .status(400)
+        .json({ success: false, message: "Missing required fields" });
     }
 
     const property = await Property.create(propertyData);
@@ -118,40 +106,30 @@ exports.createProperty = async (req, res) => {
   }
 };
 
-// @desc    Update property
-// @route   PUT /api/properties/:id
-// @access  Private (Admin + Owner)
+// Update property
 exports.updateProperty = async (req, res) => {
   try {
     let property = await Property.findById(req.params.id);
-    if (!property) {
-      return res.status(404).json({
-        success: false,
-        message: "Property not found",
-      });
-    }
+    if (!property)
+      return res
+        .status(404)
+        .json({ success: false, message: "Property not found" });
 
     if (property.postedBy.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: "Not authorized to update this property",
-      });
+      return res
+        .status(403)
+        .json({ success: false, message: "Not authorized" });
     }
 
     const updateData = { ...req.body };
-
-    // Handle updated images if provided
     if (req.files && req.files.length > 0) {
-      updateData.images = req.files.map((file) => `/uploads/${file.filename}`);
+      updateData.images = formatImages(req.files);
     }
 
     property = await Property.findByIdAndUpdate(req.params.id, updateData, {
       new: true,
       runValidators: true,
-    }).populate({
-      path: "postedBy",
-      select: "whatsappContact",
-    });
+    }).populate({ path: "postedBy", select: "whatsappContact" });
 
     res.status(200).json({ success: true, data: property });
   } catch (err) {
@@ -159,24 +137,19 @@ exports.updateProperty = async (req, res) => {
   }
 };
 
-// @desc    Delete property
-// @route   DELETE /api/properties/:id
-// @access  Private (Admin + Owner)
+// Delete property
 exports.deleteProperty = async (req, res) => {
   try {
     const property = await Property.findById(req.params.id);
-    if (!property) {
-      return res.status(404).json({
-        success: false,
-        message: "Property not found",
-      });
-    }
+    if (!property)
+      return res
+        .status(404)
+        .json({ success: false, message: "Property not found" });
 
     if (property.postedBy.toString() !== req.user.id) {
-      return res.status(403).json({
-        success: false,
-        message: "Not authorized to delete this property",
-      });
+      return res
+        .status(403)
+        .json({ success: false, message: "Not authorized" });
     }
 
     await property.deleteOne();
@@ -186,23 +159,16 @@ exports.deleteProperty = async (req, res) => {
   }
 };
 
-// @desc    Search & filter properties
-// @route   GET /api/properties/search
-// @access  Public
+// Search properties
 exports.searchProperties = async (req, res) => {
   try {
     const query = { ...req.query };
+    ["select", "sort", "page", "limit"].forEach((param) => delete query[param]);
 
-    // Remove non-filter fields
-    const removeFields = ["select", "sort", "page", "limit"];
-    removeFields.forEach((param) => delete query[param]);
-
-    // Parse boolean and numeric fields
-    if (query["specs.isFurnished"] !== undefined) {
+    if (query["specs.isFurnished"] !== undefined)
       query["specs.isFurnished"] = query["specs.isFurnished"] === "true";
-    }
 
-    const numericFields = [
+    [
       "price",
       "specs.bedrooms",
       "specs.bathrooms",
@@ -212,29 +178,20 @@ exports.searchProperties = async (req, res) => {
       "specs.windows",
       "specs.parkingSpaces",
       "specs.upperFloors",
-    ];
-
-    numericFields.forEach((field) => {
-      if (query[field] !== undefined) {
-        query[field] = Number(query[field]);
-      }
+    ].forEach((field) => {
+      if (query[field] !== undefined) query[field] = Number(query[field]);
     });
 
-    // Price filter example: max budget
-    if (query.price) {
-      query.price = { $lte: query.price };
-    }
+    if (query.price) query.price = { $lte: query.price };
 
     const properties = await Property.find(query).populate({
       path: "postedBy",
       select: "whatsappContact",
     });
 
-    res.status(200).json({
-      success: true,
-      count: properties.length,
-      data: properties,
-    });
+    res
+      .status(200)
+      .json({ success: true, count: properties.length, data: properties });
   } catch (err) {
     res.status(400).json({ success: false, message: err.message });
   }
