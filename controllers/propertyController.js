@@ -1,9 +1,23 @@
+// controllers/propertyController.js
 const Property = require("../models/Property");
+const cloudinary = require("../services/cloudinary");
 
-// --- Helper for handling uploaded images
-const formatImages = (files) => {
+// Helper: upload files to Cloudinary
+const getCloudinaryUrls = (files) => {
   if (!files || files.length === 0) return [];
-  return files.map((file) => `/uploads/${file.filename}`);
+  return files.map((file) => file.path); // multer with CloudinaryStorage stores URL in file.path
+};
+
+// Helper: delete Cloudinary image by URL
+const deleteCloudinaryImage = async (url) => {
+  try {
+    if (!url) return;
+    const segments = url.split("/");
+    const filename = segments[segments.length - 1].split(".")[0]; // remove extension
+    await cloudinary.uploader.destroy(`properties/${filename}`);
+  } catch (err) {
+    console.error("Error deleting Cloudinary image:", err.message);
+  }
 };
 
 // Get all properties
@@ -83,10 +97,9 @@ exports.createProperty = async (req, res) => {
           : undefined,
       },
       postedBy: req.user.id,
-      images: formatImages(req.files),
+      images: getCloudinaryUrls(req.files),
     };
 
-    // Validate required fields
     if (
       !propertyData.title ||
       !propertyData.price ||
@@ -122,8 +135,15 @@ exports.updateProperty = async (req, res) => {
     }
 
     const updateData = { ...req.body };
+
+    // If new images uploaded, delete old ones from Cloudinary
     if (req.files && req.files.length > 0) {
-      updateData.images = formatImages(req.files);
+      if (property.images && property.images.length > 0) {
+        await Promise.all(
+          property.images.map((url) => deleteCloudinaryImage(url))
+        );
+      }
+      updateData.images = getCloudinaryUrls(req.files);
     }
 
     property = await Property.findByIdAndUpdate(req.params.id, updateData, {
@@ -150,6 +170,13 @@ exports.deleteProperty = async (req, res) => {
       return res
         .status(403)
         .json({ success: false, message: "Not authorized" });
+    }
+
+    // Delete images from Cloudinary
+    if (property.images && property.images.length > 0) {
+      await Promise.all(
+        property.images.map((url) => deleteCloudinaryImage(url))
+      );
     }
 
     await property.deleteOne();
