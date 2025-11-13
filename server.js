@@ -6,17 +6,14 @@ const helmet = require("helmet");
 const morgan = require("morgan");
 const rateLimit = require("express-rate-limit");
 const path = require("path");
-const fetch = require("node-fetch"); // Add this for making HTTP requests
+const fetch = require("node-fetch"); // v2 compatible
 
 // Load environment variables
 dotenv.config();
 
 // Connect to MongoDB
 mongoose
-  .connect(process.env.MONGO_URI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-  })
+  .connect(process.env.MONGO_URI)
   .then(() => console.log("MongoDB connected"))
   .catch((err) => console.error("DB connection error:", err));
 
@@ -25,42 +22,38 @@ const app = express();
 // Rate limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per window
+  max: 100,
 });
 app.use(limiter);
 
 // General middleware
 app.use(helmet());
-app.use(cors()); // Allows all origins for API routes (can restrict in production)
+app.use(cors());
 app.use(morgan("combined"));
 app.use(express.json({ limit: "10mb" }));
 
-// ✅ Serve uploaded files with CORP header for cross-origin embedding
+// Serve uploaded files (if still used — though you use Cloudinary)
 app.use(
   "/uploads",
   (req, res, next) => {
-    // CORP header allows embedding in cross-origin contexts
     res.setHeader("Cross-Origin-Resource-Policy", "cross-origin");
-
-    // Optional: simple CORS headers for dev/testing
     res.setHeader("Access-Control-Allow-Origin", "*");
     res.setHeader("Access-Control-Allow-Methods", "GET");
     res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-
     next();
   },
   express.static(path.join(__dirname, "uploads"))
 );
 
-// Import models and middleware
+// Import routes and models
 const Property = require("./models/Property");
-const { protect } = require("./middleware/auth"); // Assuming you have authentication middleware
+const { protect } = require("./middleware/auth");
 
 // Routes
 app.use("/api/auth", require("./routes/auth"));
 app.use("/api/properties", require("./routes/properties"));
 
-// =============== AI CHAT ASSISTANT (OLLAMA CLOUD) ===============
+// =============== AI CHAT ASSISTANT (via OpenRouter) ===============
 app.post("/api/chat", protect, async (req, res) => {
   const { message } = req.body;
 
@@ -71,7 +64,7 @@ app.post("/api/chat", protect, async (req, res) => {
   }
 
   try {
-    // --- 1. STRUCTURE PROMPT FOR JSON EXTRACTION ---
+    // --- 1. STRUCTURED PROMPT FOR JSON EXTRACTION ---
     const prompt = `
 You are a real estate assistant for Home254, a Kenyan property platform.
 Extract property search criteria from the user's message.
@@ -95,56 +88,55 @@ User: "furnished bungalows"
 User message: ${JSON.stringify(message.trim())}
 `;
 
-    // --- 2. CALL OLLAMA CLOUD ---
-    const ollamaRes = await fetch(
-      "https://api.ollama.com/v1/chat/completions",
+    // --- 2. CALL OPENROUTER (CLOUD LLM) ---
+    const openrouterRes = await fetch(
+      "https://openrouter.ai/api/v1/chat/completions",
       {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${process.env.OLLAMA_CLOUD_API_KEY}`,
+          Authorization: `Bearer ${process.env.OPENROUTER_API_KEY}`,
           "Content-Type": "application/json",
+          "HTTP-Referer": process.env.VITE_APP_URL || "http://localhost:5000",
+          "X-Title": "Home254",
         },
         body: JSON.stringify({
-          model: "llama3.1",
+          model: "meta-llama/llama-3.1-8b-instruct",
           messages: [{ role: "user", content: prompt }],
           format: "json",
           temperature: 0.1,
-          stream: false,
         }),
       }
     );
 
-    if (!ollamaRes.ok) {
-      const text = await ollamaRes.text();
-      console.error("Ollama Cloud error:", text);
-      return res
-        .status(500)
-        .json({
-          reply: "AI assistant is unavailable. Try again later.",
-          properties: [],
-        });
+    if (!openrouterRes.ok) {
+      const text = await openrouterRes.text();
+      console.error("OpenRouter error:", text);
+      return res.status(500).json({
+        reply: "AI assistant is unavailable. Please try again later.",
+        properties: [],
+      });
     }
 
-    const data = await ollamaRes.json();
+    const data = await openrouterRes.json();
     const aiResponse = data?.choices?.[0]?.message?.content;
 
     if (!aiResponse) {
       throw new Error("No response from AI");
     }
 
-    // --- 3. PARSE JSON FILTERS ---
+    // --- 3. PARSE FILTERS ---
     let filters;
     try {
       filters = JSON.parse(aiResponse);
     } catch (e) {
       return res.json({
         reply:
-          'I couldn\'t understand your request. Try: _"3-bedroom apartments under 5M in Nairobi"_',
+          'I couldn’t understand your request. Try: _"3-bedroom apartments under 5M in Nairobi"_',
         properties: [],
       });
     }
 
-    // --- 4. QUERY YOUR LOCAL PROPERTY DB ---
+    // --- 4. QUERY LOCAL PROPERTY DB ---
     const query = {};
 
     if (filters["location.county"])
