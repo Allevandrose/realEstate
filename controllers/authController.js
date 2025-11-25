@@ -34,9 +34,11 @@ exports.register = async (req, res) => {
       email,
       password,
       whatsappContact,
+      // Add role assignment here if needed
+      role: "admin", // or however you want to assign roles
     });
 
-    // Send JWT token
+    // Send JWT token and user information
     const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET, {
       expiresIn: process.env.JWT_EXPIRE || "30d",
     });
@@ -44,6 +46,13 @@ exports.register = async (req, res) => {
     res.status(201).json({
       success: true,
       token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        whatsappContact: user.whatsappContact,
+      },
     });
   } catch (err) {
     // Handle duplicate key or validation errors from MongoDB
@@ -98,9 +107,17 @@ exports.login = async (req, res) => {
       expiresIn: process.env.JWT_EXPIRE || "30d",
     });
 
+    // Return token AND user information (excluding password)
     res.json({
       success: true,
       token,
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role, // Make sure the user model has a role field
+        whatsappContact: user.whatsappContact,
+      },
     });
   } catch (err) {
     res.status(500).json({
